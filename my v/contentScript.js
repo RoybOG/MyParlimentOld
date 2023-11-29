@@ -1,6 +1,7 @@
 const meetURLRegex = /(?<id>[a-z0-9]{3,}\-[a-z0-9]{3,}\-[a-z0-9]{3,})/;
 const convertToBoolean = (str) => str === "true";
 
+//------------------------------------ dom utils--------------------------------------
 function waitForElementToExist(selector, ifNotExists = () => {}) {
   return new Promise((resolve, reject) => {
     if (document.querySelector(selector)) {
@@ -30,20 +31,29 @@ const injectContent = () => {
   );
 
   if (!muteButton) return false;
-  console.log(muteButton);
 };
-const inMeetingPage = () => Boolean(document.querySelector("div.lefKC"));
+
+const getMuteButton = () =>
+  document.querySelector(
+    'div.Tmb7Fd button[data-is-muted][aria-label*="מיקרופון" i],button[data-is-muted][aria-label*="microphone" i]' //להוסיף לשפות אחרות
+  );
+//------------------------------------ local storage--------------------------------------
+async function getParticipantDetailsFromStorage() {
+  try {
+    return await JSON.parse(localStorage.getItem("Participant") || "{}");
+  } catch (err) {
+    console.log(err);
+    return null;
+  }
+}
 
 async function saveParticipantDetails(ParticipantDetailsFromDom) {
   try {
     let storageDetails = (await getParticipantDetailsFromStorage()) || {};
-    console.log(storageDetails);
     if (!("uuid" in storageDetails)) {
-      console.log("creating new uuid");
       storageDetails.uuid = crypto.randomUUID();
     }
     storageDetails = { ...storageDetails, ...ParticipantDetailsFromDom };
-    console.log(storageDetails);
     await localStorage.setItem("Participant", JSON.stringify(storageDetails));
 
     return true;
@@ -53,12 +63,30 @@ async function saveParticipantDetails(ParticipantDetailsFromDom) {
   }
 }
 
-async function getParticipantDetailsFromStorage() {
-  try {
-    return await JSON.parse(localStorage.getItem("Participant") || "{}");
-  } catch (err) {
-    console.log(err);
-    return null;
+//------------------------------------ participant details--------------------------------------
+
+function simulateMute() {
+  const OSName = navigator.appVersion.indexOf("Mac") != -1 ? "MacOS" : "Other";
+  if (OSName == "MacOS") {
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        metaKey: true,
+        keyCode: 68,
+        code: "KeyD",
+      })
+    );
+  } else {
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: true,
+        keyCode: 68,
+        code: "KeyD",
+      })
+    );
   }
 }
 
@@ -95,40 +123,9 @@ async function extractParticipantDetails() {
   }
 }
 
-function simulateMute() {
-  const OSName = navigator.appVersion.indexOf("Mac") != -1 ? "MacOS" : "Other";
-  if (OSName == "MacOS") {
-    document.dispatchEvent(
-      new KeyboardEvent("keydown", {
-        bubbles: true,
-        cancelable: true,
-        metaKey: true,
-        keyCode: 68,
-        code: "KeyD",
-      })
-    );
-  } else {
-    document.dispatchEvent(
-      new KeyboardEvent("keydown", {
-        bubbles: true,
-        cancelable: true,
-        ctrlKey: true,
-        keyCode: 68,
-        code: "KeyD",
-      })
-    );
-  }
-}
-
-const getMuteButton = () =>
-  document.querySelector(
-    'div.Tmb7Fd button[data-is-muted][aria-label*="מיקרופון" i],button[data-is-muted][aria-label*="microphone" i]' //להוסיף לשפות אחרות
-  );
-
 function updateMuteButton(hasPermission) {
   const muteButton = getMuteButton();
   muteButton.disabled = !hasPermission;
-  console.log(muteButton);
   if (
     !convertToBoolean(muteButton.getAttribute("data-is-muted")) &&
     !hasPermission
@@ -143,7 +140,6 @@ async function checkParticipant() {
   await chrome.runtime.sendMessage(
     { type: "CHECKPERMISSION", ParticipantDetails },
     (res) => {
-      console.log(res);
       updateMuteButton(res.canSpeak);
     }
   );
@@ -164,18 +160,18 @@ function setupMuteObserver() {
   return observer;
 }
 
+//-----------------------------------the main function------------------------------------------------------
 async function setup() {
   const meetingID = window.location.pathname.match(meetURLRegex);
 
   const { ParticipantDetails, isHost } = await extractParticipantDetails();
-  console.log(await saveParticipantDetails(ParticipantDetails));
-  checkParticipant();
+  await saveParticipantDetails(ParticipantDetails);
+  await checkParticipant();
   setupMuteObserver();
   // checkParticipant();
 }
 
 (async () => {
-  console.log("new tab loaded!");
   try {
     await waitForElementToExist('button[jsname="A5il2e"]');
     await setup();
