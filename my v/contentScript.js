@@ -1,4 +1,5 @@
 const meetURLRegex = /(?<id>[a-z0-9]{3,}\-[a-z0-9]{3,}\-[a-z0-9]{3,})/;
+const convertToBoolean = (str) => str === "true";
 
 function waitForElementToExist(selector, ifNotExists = () => {}) {
   return new Promise((resolve, reject) => {
@@ -33,16 +34,31 @@ const injectContent = () => {
 };
 const inMeetingPage = () => Boolean(document.querySelector("div.lefKC"));
 
-async function saveParticipantDetails(currentParticipantDetails) {
+async function saveParticipantDetails(ParticipantDetailsFromDom) {
   try {
-    await chrome.storage.sync.set({
-      Participant: currentParticipantDetails,
-    });
+    let storageDetails = (await getParticipantDetailsFromStorage()) || {};
+    console.log(storageDetails);
+    if (!("uuid" in storageDetails)) {
+      console.log("creating new uuid");
+      storageDetails.uuid = crypto.randomUUID();
+    }
+    storageDetails = { ...storageDetails, ...ParticipantDetailsFromDom };
+    console.log(storageDetails);
+    await localStorage.setItem("Participant", JSON.stringify(storageDetails));
 
     return true;
   } catch (err) {
     console.log(err);
     return false;
+  }
+}
+
+async function getParticipantDetailsFromStorage() {
+  try {
+    return await JSON.parse(localStorage.getItem("Participant") || "{}");
+  } catch (err) {
+    console.log(err);
+    return null;
   }
 }
 
@@ -63,10 +79,13 @@ async function extractParticipantDetails() {
     );
 
     return {
-      username: youLabel.previousSibling.textContent,
-      password: youLabel
-        .closest('div[role="listitem"]')
-        .getAttribute("data-participant-id"),
+      ParticipantDetails: {
+        username: youLabel.previousSibling.textContent,
+        googleID: youLabel
+          .closest('div[role="listitem"]')
+          .getAttribute("data-participant-id"),
+      },
+      isHost: Boolean(youLabel.parentElement.nextSibling?.textContent),
     };
   } catch (err) {
     alert("This page is corrupted, can you please refresh the page?");
@@ -76,15 +95,93 @@ async function extractParticipantDetails() {
   }
 }
 
+function simulateMute() {
+  const OSName = navigator.appVersion.indexOf("Mac") != -1 ? "MacOS" : "Other";
+  if (OSName == "MacOS") {
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        metaKey: true,
+        keyCode: 68,
+        code: "KeyD",
+      })
+    );
+  } else {
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: true,
+        keyCode: 68,
+        code: "KeyD",
+      })
+    );
+  }
+}
+
+const getMuteButton = () =>
+  document.querySelector(
+    'div.Tmb7Fd button[data-is-muted][aria-label*="מיקרופון" i],button[data-is-muted][aria-label*="microphone" i]' //להוסיף לשפות אחרות
+  );
+
+function updateMuteButton(hasPermission) {
+  const muteButton = getMuteButton();
+  muteButton.disabled = !hasPermission;
+  console.log(muteButton);
+  if (
+    !convertToBoolean(muteButton.getAttribute("data-is-muted")) &&
+    !hasPermission
+  ) {
+    simulateMute();
+  }
+}
+
+async function checkParticipant() {
+  //This function needs to run on 3 different occations: on loading page, on changing speaking and on changing who has permission
+  const ParticipantDetails = await getParticipantDetailsFromStorage();
+  await chrome.runtime.sendMessage(
+    { type: "CHECKPERMISSION", ParticipantDetails },
+    (res) => {
+      console.log(res);
+      updateMuteButton(res.canSpeak);
+    }
+  );
+}
+
+function setupMuteObserver() {
+  const config = {
+    subtree: true,
+    attributeOldValue: true,
+    attributeFilter: ["data-is-muted"],
+  };
+
+  const observer = new MutationObserver(async () => {
+    await checkParticipant();
+  });
+  observer.observe(getMuteButton(), config);
+
+  return observer;
+}
+
+async function setup() {
+  const meetingID = window.location.pathname.match(meetURLRegex);
+
+  const { ParticipantDetails, isHost } = await extractParticipantDetails();
+  console.log(await saveParticipantDetails(ParticipantDetails));
+  checkParticipant();
+  setupMuteObserver();
+  // checkParticipant();
+}
+
 (async () => {
   console.log("new tab loaded!");
   try {
     await waitForElementToExist('button[jsname="A5il2e"]');
-    const meetingID = window.location.pathname.match(meetURLRegex);
-    const userDetails = await extractParticipantDetails();
-    console.log(await saveParticipantDetails(userDetails));
-  } catch {
+    await setup();
+  } catch (err) {
     console.log("failed");
+    console.log(err);
   }
 
   // `tab` will either be a `tabs.Tab` instance or `undefined`.
